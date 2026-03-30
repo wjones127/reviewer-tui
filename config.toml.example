@@ -1,0 +1,20 @@
+# Reviewer TUI configuration
+#
+# Copy this file to ~/.config/reviewer-tui/config.toml and edit to taste.
+
+# Your GitHub username. Used to identify your own PRs (which are excluded
+# from the review lists) and to detect updates since your last review.
+user = "your-github-username"
+
+# Repositories to track. Use "owner/repo" format.
+repos = [
+    # "lancedb/lancedb",
+    # "lance-format/lance",
+]
+
+# Tags of interest (GitHub labels). PRs with any of these labels rank higher
+# in the priority list. PRs without matching labels still appear, just lower.
+tags = [
+    # "python",
+    # "rust",
+]
