@@ -16,8 +16,10 @@ type PR struct {
 	Repo              string
 	Number            int
 	Title             string
+	Body              string
 	Author            string
 	AuthorAssociation string
+	IsBot             bool
 	Labels            []string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time

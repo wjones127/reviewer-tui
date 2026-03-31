@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -83,19 +84,20 @@ var keys = keyMap{
 }
 
 type model struct {
-	cfg       Config
-	db        *DB
-	activeTab int
+	cfg              Config
+	db               *DB
+	activeTab        int
 	newTab           tabModel
 	reviewTab        tabModel
 	awaitingMergeTab tabModel
-	help      help.Model
-	spinner   spinner.Model
-	loading   bool
-	err       error
-	width     int
-	height    int
-	statusMsg string
+	help             help.Model
+	spinner          spinner.Model
+	loading          bool
+	err              error
+	width            int
+	height           int
+	statusMsg        string
+	triageMap        map[string]TriageResult
 }
 
 // Messages for async operations.
@@ -104,19 +106,20 @@ type actionDoneMsg struct {
 	msg string
 	err error
 }
+type triageDoneMsg struct{ err error }
 
 func newModel(cfg Config, db *DB) model {
 	s := spinner.New(spinner.WithSpinner(spinner.Dot))
 
 	m := model{
-		cfg:       cfg,
-		db:        db,
+		cfg:              cfg,
+		db:               db,
 		activeTab:        tabNew,
 		newTab:           newTabModel(tabNew),
 		reviewTab:        newTabModel(tabReview),
 		awaitingMergeTab: newTabModel(tabAwaitingMerge),
-		help:      help.New(),
-		spinner:   s,
+		help:             help.New(),
+		spinner:          s,
 	}
 	return m
 }
@@ -149,15 +152,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fetchDoneMsg:
 		m.loading = false
 		if msg.err != nil {
+			log.Printf("fetch error: %v", msg.err)
 			m.err = msg.err
 			m.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 		} else {
+			log.Printf("fetch complete")
 			m.statusMsg = "Refreshed"
+			cmds = append(cmds, m.loadFromDB())
+			if m.cfg.TriageEnabled {
+				cmds = append(cmds, m.runTriageCmd())
+			}
+		}
+
+	case triageDoneMsg:
+		if msg.err != nil {
+			log.Printf("triage error: %v", msg.err)
+			m.statusMsg = fmt.Sprintf("Triage error: %v", msg.err)
+		} else {
+			log.Printf("triage complete")
 			cmds = append(cmds, m.loadFromDB())
 		}
 
 	case actionDoneMsg:
 		if msg.err != nil {
+			log.Printf("action error: %v", msg.err)
 			m.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 		} else {
 			m.statusMsg = msg.msg
@@ -165,9 +183,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case prsLoadedMsg:
-		m.newTab.setPRs(msg.newPRs, m.cfg.Tags, msg.updatesMap)
-		m.reviewTab.setPRs(msg.reviewPRs, m.cfg.Tags, msg.updatesMap)
-		m.awaitingMergeTab.setPRs(msg.awaitingMergePRs, m.cfg.Tags, msg.updatesMap)
+		m.triageMap = msg.triageMap
+		m.newTab.setPRs(msg.newPRs, m.cfg.Tags, msg.updatesMap, msg.triageMap)
+		m.reviewTab.setPRs(msg.reviewPRs, m.cfg.Tags, msg.updatesMap, msg.triageMap)
+		m.awaitingMergeTab.setPRs(msg.awaitingMergePRs, m.cfg.Tags, msg.updatesMap, msg.triageMap)
 
 	case tea.KeyPressMsg:
 		if m.loading {
@@ -293,9 +312,18 @@ func (m model) View() tea.View {
 		b.WriteString("\n")
 	}
 
-	// Status message
-	if m.statusMsg != "" {
-		b.WriteString(statusStyle.Render(m.statusMsg))
+	// Status message — show triage summary when idle
+	statusText := m.statusMsg
+	if statusText == "" || statusText == "Refreshed" {
+		if pr, ok := m.selectedPR(); ok {
+			k := fmt.Sprintf("%s#%d", pr.Repo, pr.Number)
+			if t, ok := m.triageMap[k]; ok && t.HeadSHA == pr.HeadSHA {
+				statusText = t.Summary
+			}
+		}
+	}
+	if statusText != "" {
+		b.WriteString(statusStyle.Render(statusText))
 	}
 	b.WriteString("\n")
 
@@ -339,24 +367,30 @@ type prsLoadedMsg struct {
 	reviewPRs        []PR
 	awaitingMergePRs []PR
 	updatesMap       map[string]bool
+	triageMap        map[string]TriageResult
 }
 
 func (m model) loadFromDB() tea.Cmd {
 	return func() tea.Msg {
 		newPRs, err := m.db.ListNewPRs(m.cfg.User, 10)
 		if err != nil {
+			log.Printf("loadFromDB: ListNewPRs error: %v", err)
 			return fetchDoneMsg{err: err}
 		}
 
 		reviewPRs, err := m.db.ListReviewPRs(m.cfg.User)
 		if err != nil {
+			log.Printf("loadFromDB: ListReviewPRs error: %v", err)
 			return fetchDoneMsg{err: err}
 		}
 
 		awaitingMergePRs, err := m.db.ListAwaitingMergePRs(m.cfg.User)
 		if err != nil {
+			log.Printf("loadFromDB: ListAwaitingMergePRs error: %v", err)
 			return fetchDoneMsg{err: err}
 		}
+
+		log.Printf("loadFromDB: new=%d review=%d awaiting=%d", len(newPRs), len(reviewPRs), len(awaitingMergePRs))
 
 		updatesMap := make(map[string]bool)
 		for _, pr := range reviewPRs {
@@ -366,11 +400,14 @@ func (m model) loadFromDB() tea.Cmd {
 			}
 		}
 
+		triageMap, _ := m.db.LoadTriageMap()
+
 		return prsLoadedMsg{
 			newPRs:           newPRs,
 			reviewPRs:        reviewPRs,
 			awaitingMergePRs: awaitingMergePRs,
 			updatesMap:       updatesMap,
+			triageMap:        triageMap,
 		}
 	}
 }
@@ -378,6 +415,7 @@ func (m model) loadFromDB() tea.Cmd {
 func (m model) fetchFromGitHub() tea.Cmd {
 	return func() tea.Msg {
 		for _, repo := range m.cfg.Repos {
+			log.Printf("fetching PRs for %s", repo)
 			if err := FetchRepoPRs(m.db, repo, m.cfg.User); err != nil {
 				return fetchDoneMsg{err: fmt.Errorf("%s: %w", repo, err)}
 			}
@@ -392,6 +430,12 @@ func (m model) assignSelf(pr PR) tea.Cmd {
 			return actionDoneMsg{err: err}
 		}
 		return actionDoneMsg{msg: fmt.Sprintf("Assigned to %s#%d", pr.Repo, pr.Number)}
+	}
+}
+
+func (m model) runTriageCmd() tea.Cmd {
+	return func() tea.Msg {
+		return triageDoneMsg{err: RunTriage(m.db)}
 	}
 }
 

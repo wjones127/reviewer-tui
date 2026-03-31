@@ -18,3 +18,7 @@ tags = [
     # "python",
     # "rust",
 ]
+
+# Enable LLM-based triage to estimate review effort per PR.
+# Requires the `claude` CLI to be installed. Uses Claude Haiku.
+# triage_enabled = true

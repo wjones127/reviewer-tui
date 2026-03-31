@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	User  string   `toml:"user"`
-	Repos []string `toml:"repos"`
-	Tags  []string `toml:"tags"`
+	User          string   `toml:"user"`
+	Repos         []string `toml:"repos"`
+	Tags          []string `toml:"tags"`
+	TriageEnabled bool     `toml:"triage_enabled"`
 }
 
 func configDir() string {

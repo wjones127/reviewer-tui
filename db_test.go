@@ -222,6 +222,80 @@ func TestListReviewPRs(t *testing.T) {
 	}
 }
 
+func TestReviewedPRMovesToReviewTab(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now()
+
+	pr := PR{
+		Repo: "org/repo", Number: 1, Title: "Feature",
+		Author:    "bob",
+		CreatedAt: now.Add(-24 * time.Hour), UpdatedAt: now, FetchedAt: now,
+		Labels: []string{},
+	}
+	if err := db.UpsertPR(pr); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before review: should be in New, not in Review
+	newPRs, _ := db.ListNewPRs("alice", 10)
+	reviewPRs, _ := db.ListReviewPRs("alice")
+	if len(newPRs) != 1 {
+		t.Errorf("expected 1 new PR before review, got %d", len(newPRs))
+	}
+	if len(reviewPRs) != 0 {
+		t.Errorf("expected 0 review PRs before review, got %d", len(reviewPRs))
+	}
+
+	// After non-approval review: should move from New to Review
+	if err := db.UpsertUserReview("org/repo", 1, now, "CHANGES_REQUESTED"); err != nil {
+		t.Fatal(err)
+	}
+	newPRs, _ = db.ListNewPRs("alice", 10)
+	reviewPRs, _ = db.ListReviewPRs("alice")
+	if len(newPRs) != 0 {
+		t.Errorf("expected 0 new PRs after review, got %d", len(newPRs))
+	}
+	if len(reviewPRs) != 1 {
+		t.Errorf("expected 1 review PR after review, got %d", len(reviewPRs))
+	}
+}
+
+func TestApprovedPRMovesToAwaitingMerge(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now()
+
+	pr := PR{
+		Repo: "org/repo", Number: 1, Title: "Feature",
+		Author:    "bob",
+		CIStatus:  CIStatusPass,
+		CreatedAt: now.Add(-24 * time.Hour), UpdatedAt: now, FetchedAt: now,
+		Labels: []string{},
+	}
+	if err := db.UpsertPR(pr); err != nil {
+		t.Fatal(err)
+	}
+
+	// Approve the PR
+	if err := db.UpsertUserReview("org/repo", 1, now, "APPROVED"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be in Awaiting Merge (even with CI passing), not in New or Review
+	newPRs, _ := db.ListNewPRs("alice", 10)
+	reviewPRs, _ := db.ListReviewPRs("alice")
+	awaitingPRs, _ := db.ListAwaitingMergePRs("alice")
+
+	if len(newPRs) != 0 {
+		t.Errorf("expected 0 new PRs after approval, got %d", len(newPRs))
+	}
+	if len(reviewPRs) != 0 {
+		t.Errorf("expected 0 review PRs after approval, got %d", len(reviewPRs))
+	}
+	if len(awaitingPRs) != 1 {
+		t.Errorf("expected 1 awaiting merge PR after approval, got %d", len(awaitingPRs))
+	}
+}
+
 func TestHasUpdatesSinceReview(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now()

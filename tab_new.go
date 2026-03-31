@@ -13,6 +13,7 @@ import (
 type tabModel struct {
 	table         table.Model
 	prs           []PR
+	triageMap     map[string]TriageResult
 	tabType       int
 	showDismissed bool
 }
@@ -20,8 +21,6 @@ type tabModel struct {
 func newTabModel(tabType int) tabModel {
 	cols := commonColumns()
 	switch tabType {
-	case tabNew:
-		cols = append(cols, table.Column{Title: "New?", Width: 4})
 	case tabReview:
 		cols = append(cols, table.Column{Title: "Upd", Width: 3})
 	}
@@ -51,6 +50,7 @@ func commonColumns() []table.Column {
 		{Title: "Merge", Width: 5},
 		{Title: "+/-", Width: 10},
 		{Title: "Age", Width: 8},
+		{Title: "Est.", Width: 5},
 	}
 }
 
@@ -59,32 +59,34 @@ func (t *tabModel) setSize(width, height int) {
 	t.table.SetHeight(height)
 }
 
-func (t *tabModel) setPRs(prs []PR, tags []string, updatesMap map[string]bool) {
+func (t *tabModel) setPRs(prs []PR, tags []string, updatesMap map[string]bool, triageMap map[string]TriageResult) {
 	t.prs = prs
+	t.triageMap = triageMap
 	SortPRsByScore(prs, tags, updatesMap)
 
 	rows := make([]table.Row, len(prs))
 	for i, pr := range prs {
+		k := fmt.Sprintf("%s#%d", pr.Repo, pr.Number)
+
+		effortStr := "..."
+		if tr, ok := triageMap[k]; ok && tr.HeadSHA == pr.HeadSHA {
+			effortStr = tr.Effort
+		}
+
 		row := table.Row{
 			shortRepo(pr.Repo),
 			fmt.Sprintf("#%d", pr.Number),
 			truncate(pr.Title, 38),
-			pr.Author,
+			authorLabel(pr),
 			ciStatusLabel(pr.CIStatus),
 			reviewDecisionLabel(pr.ReviewDecision),
 			mergeableLabel(pr.Mergeable),
 			fmt.Sprintf("+%d/-%d", pr.Additions, pr.Deletions),
 			formatAge(pr.CreatedAt),
+			effortStr,
 		}
 		switch t.tabType {
-		case tabNew:
-			if pr.IsNewContributor() {
-				row = append(row, " !")
-			} else {
-				row = append(row, "")
-			}
 		case tabReview:
-			k := fmt.Sprintf("%s#%d", pr.Repo, pr.Number)
 			if updatesMap[k] {
 				row = append(row, " *")
 			} else {
@@ -145,10 +147,29 @@ func truncate(s string, max int) string {
 }
 
 var (
-	ciPassStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))  // green
-	ciFailStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))  // red
+	ciPassStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
+	ciFailStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red
 	ciNeedsApprovalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+
+	authorInternalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))   // cyan — org member/owner
+	authorNewStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))   // yellow — first-time/unknown
+	authorBotStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")) // dim gray — bot
 )
+
+func authorLabel(pr PR) string {
+	name := truncate(pr.Author, 13)
+	if pr.IsBot {
+		return authorBotStyle.Render(name)
+	}
+	switch pr.AuthorAssociation {
+	case "OWNER", "MEMBER":
+		return authorInternalStyle.Render(name)
+	case "COLLABORATOR", "CONTRIBUTOR":
+		return name
+	default: // FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE
+		return authorNewStyle.Render(name)
+	}
+}
 
 func ciStatusLabel(status CIStatus) string {
 	switch status {

@@ -65,6 +65,7 @@ query($owner: String!, $name: String!) {
 
         author {
           login
+          __typename
         }
 
         labels(first: 20) {
@@ -128,11 +129,12 @@ type gqlPR struct {
 	HeadRefOid        string    `json:"headRefOid"`
 	AuthorAssociation string    `json:"authorAssociation"`
 	IsDraft           bool      `json:"isDraft"`
-	ReviewDecision    string    `json:"reviewDecision"`    // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or ""
-	Mergeable         string    `json:"mergeable"`         // MERGEABLE, CONFLICTING, UNKNOWN
+	ReviewDecision    string    `json:"reviewDecision"` // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or ""
+	Mergeable         string    `json:"mergeable"`      // MERGEABLE, CONFLICTING, UNKNOWN
 
 	Author *struct {
-		Login string `json:"login"`
+		Login    string `json:"login"`
+		Typename string `json:"__typename"`
 	} `json:"author"`
 
 	Labels struct {
@@ -213,8 +215,10 @@ func FetchRepoPRs(db *DB, repo, user string) error {
 		openNumbers = append(openNumbers, gpr.Number)
 
 		authorLogin := ""
+		isBot := false
 		if gpr.Author != nil {
 			authorLogin = gpr.Author.Login
+			isBot = gpr.Author.Typename == "Bot"
 		}
 
 		labels := make([]string, len(gpr.Labels.Nodes))
@@ -256,6 +260,7 @@ func FetchRepoPRs(db *DB, repo, user string) error {
 			IsReviewer:        isReviewer,
 			IsAssignee:        isAssignee,
 			IsAuthor:          strings.EqualFold(authorLogin, user),
+			IsBot:             isBot,
 			IsDraft:           gpr.IsDraft,
 			ReviewDecision:    gpr.ReviewDecision,
 			Mergeable:         gpr.Mergeable,
