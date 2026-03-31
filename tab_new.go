@@ -14,6 +14,7 @@ type tabModel struct {
 	table         table.Model
 	prs           []PR
 	triageMap     map[string]TriageResult
+	userReviewMap map[string]UserReview
 	tabType       int
 	showDismissed bool
 }
@@ -22,7 +23,7 @@ func newTabModel(tabType int) tabModel {
 	cols := commonColumns()
 	switch tabType {
 	case tabReview:
-		cols = append(cols, table.Column{Title: "Upd", Width: 3})
+		cols = append(cols, table.Column{Title: "Last action", Width: 20})
 	}
 
 	t := table.New(
@@ -59,9 +60,10 @@ func (t *tabModel) setSize(width, height int) {
 	t.table.SetHeight(height)
 }
 
-func (t *tabModel) setPRs(prs []PR, tags []string, updatesMap map[string]bool, triageMap map[string]TriageResult) {
+func (t *tabModel) setPRs(prs []PR, tags []string, updatesMap map[string]bool, triageMap map[string]TriageResult, userReviewMap map[string]UserReview) {
 	t.prs = prs
 	t.triageMap = triageMap
+	t.userReviewMap = userReviewMap
 	SortPRsByScore(prs, tags, updatesMap)
 
 	rows := make([]table.Row, len(prs))
@@ -85,13 +87,10 @@ func (t *tabModel) setPRs(prs []PR, tags []string, updatesMap map[string]bool, t
 			formatAge(pr.CreatedAt),
 			effortStr,
 		}
-		switch t.tabType {
-		case tabReview:
-			if updatesMap[k] {
-				row = append(row, " *")
-			} else {
-				row = append(row, "")
-			}
+		if t.tabType == tabReview {
+			ur := userReviewMap[k]
+			label, actionNeeded, since := lastActionLabel(pr, ur)
+			row = append(row, lastActionStyle(label, actionNeeded, since))
 		}
 		rows[i] = row
 	}
@@ -117,6 +116,63 @@ func (t tabModel) view() string {
 		return "\n  No PRs to show.\n"
 	}
 	return t.table.View() + "\n"
+}
+
+// lastActionLabel returns a display label, whether action is needed, and the
+// reference timestamp for the event (used for age-based color escalation).
+func lastActionLabel(pr PR, ur UserReview) (label string, actionNeeded bool, since time.Time) {
+	reviewed := !ur.ReviewedAt.IsZero()
+
+	if !reviewed {
+		// No review yet — show PR age, action needed.
+		if pr.IsReviewer {
+			return "Requested", true, pr.CreatedAt
+		}
+		if pr.IsAssignee {
+			return "Assigned", true, pr.CreatedAt
+		}
+		return "New", true, pr.CreatedAt
+	}
+
+	// Has a review — check what happened since.
+	if ur.State == "APPROVED" {
+		return "Approved", false, ur.ReviewedAt
+	}
+
+	if pr.LastCommitAt.After(ur.ReviewedAt) {
+		return "Author updated", true, pr.LastCommitAt
+	}
+	if pr.UpdatedAt.After(ur.ReviewedAt) {
+		return "Author replied", true, pr.UpdatedAt
+	}
+
+	if ur.State == "CHANGES_REQUESTED" {
+		return "Changes req'd", false, ur.ReviewedAt
+	}
+	return "Reviewed", false, ur.ReviewedAt
+}
+
+var (
+	lastActionActionStyle = lipgloss.NewStyle()                                   // default — age escalation applied below
+	lastActionWaitStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")) // dim gray
+	lastActionYellow      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	lastActionRed         = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+)
+
+func lastActionStyle(label string, actionNeeded bool, since time.Time) string {
+	age := time.Since(since)
+	text := label + " " + formatAge(since)
+	if !actionNeeded {
+		return lastActionWaitStyle.Render(text)
+	}
+	switch {
+	case age >= 3*24*time.Hour:
+		return lastActionRed.Render(text)
+	case age >= 24*time.Hour:
+		return lastActionYellow.Render(text)
+	default:
+		return text
+	}
 }
 
 // Helpers

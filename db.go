@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS pulls (
     additions         INTEGER,
     deletions         INTEGER,
     head_sha          TEXT,
+    last_commit_at    TEXT,
     ci_status         TEXT,
     is_reviewer       INTEGER NOT NULL DEFAULT 0,
     is_assignee       INTEGER NOT NULL DEFAULT 0,
@@ -66,7 +67,7 @@ CREATE TABLE IF NOT EXISTS pr_triage (
 // prColumns is the SELECT column list shared by all PR queries.
 const prColumns = `p.repo, p.number, p.title, p.body, p.author, p.author_association,
 	p.labels, p.created_at, p.updated_at, p.additions, p.deletions,
-	p.head_sha, p.ci_status, p.is_reviewer, p.is_assignee, p.is_author,
+	p.head_sha, p.last_commit_at, p.ci_status, p.is_reviewer, p.is_assignee, p.is_author,
 	p.is_draft, p.is_bot, p.review_decision, p.mergeable, p.fetched_at`
 
 type DB struct {
@@ -92,6 +93,7 @@ func OpenDB(path string) (*DB, error) {
 	// Migrations for existing databases.
 	db.Exec("ALTER TABLE pulls ADD COLUMN body TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE pulls ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE pulls ADD COLUMN last_commit_at TEXT")
 	return &DB{db: db}, nil
 }
 
@@ -104,12 +106,16 @@ func (d *DB) UpsertPR(pr PR) error {
 	if err != nil {
 		return fmt.Errorf("marshaling labels: %w", err)
 	}
+	lastCommitAt := ""
+	if !pr.LastCommitAt.IsZero() {
+		lastCommitAt = pr.LastCommitAt.Format(time.RFC3339)
+	}
 	_, err = d.db.Exec(`
 		INSERT INTO pulls (repo, number, title, body, author, author_association, labels,
-			created_at, updated_at, additions, deletions, head_sha, ci_status,
+			created_at, updated_at, additions, deletions, head_sha, last_commit_at, ci_status,
 			is_reviewer, is_assignee, is_author, is_draft, is_bot, review_decision,
 			mergeable, fetched_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (repo, number) DO UPDATE SET
 			title = excluded.title,
 			body = excluded.body,
@@ -121,6 +127,7 @@ func (d *DB) UpsertPR(pr PR) error {
 			additions = excluded.additions,
 			deletions = excluded.deletions,
 			head_sha = excluded.head_sha,
+			last_commit_at = excluded.last_commit_at,
 			ci_status = excluded.ci_status,
 			is_reviewer = excluded.is_reviewer,
 			is_assignee = excluded.is_assignee,
@@ -133,7 +140,7 @@ func (d *DB) UpsertPR(pr PR) error {
 		pr.Repo, pr.Number, pr.Title, pr.Body, pr.Author, pr.AuthorAssociation,
 		string(labelsJSON),
 		pr.CreatedAt.Format(time.RFC3339), pr.UpdatedAt.Format(time.RFC3339),
-		pr.Additions, pr.Deletions, pr.HeadSHA, string(pr.CIStatus),
+		pr.Additions, pr.Deletions, pr.HeadSHA, nullableStr(lastCommitAt), string(pr.CIStatus),
 		boolToInt(pr.IsReviewer), boolToInt(pr.IsAssignee), boolToInt(pr.IsAuthor),
 		boolToInt(pr.IsDraft), boolToInt(pr.IsBot), pr.ReviewDecision, pr.Mergeable,
 		pr.FetchedAt.Format(time.RFC3339),
@@ -330,6 +337,38 @@ func (d *DB) ListDismissedPRs() ([]PR, error) {
 	return scanPRs(rows)
 }
 
+// UserReview holds the user's last review info for a PR.
+type UserReview struct {
+	ReviewedAt time.Time
+	State      string // APPROVED, CHANGES_REQUESTED, COMMENTED, etc.
+}
+
+// LoadUserReviewMap returns the user's last review per PR, keyed by "repo#number".
+func (d *DB) LoadUserReviewMap() (map[string]UserReview, error) {
+	rows, err := d.db.Query("SELECT repo, number, reviewed_at, review_state FROM user_reviews")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	m := make(map[string]UserReview)
+	for rows.Next() {
+		var repo, reviewedAt string
+		var number int
+		var state sql.NullString
+		if err := rows.Scan(&repo, &number, &reviewedAt, &state); err != nil {
+			return nil, err
+		}
+		t, _ := time.Parse(time.RFC3339, reviewedAt)
+		ur := UserReview{ReviewedAt: t}
+		if state.Valid {
+			ur.State = state.String
+		}
+		m[fmt.Sprintf("%s#%d", repo, number)] = ur
+	}
+	return m, rows.Err()
+}
+
 func (d *DB) UpsertTriage(repo string, number int, headSHA, summary, effort string) error {
 	_, err := d.db.Exec(`
 		INSERT INTO pr_triage (repo, number, head_sha, summary, effort)
@@ -390,13 +429,13 @@ func scanPRs(rows *sql.Rows) ([]PR, error) {
 		var pr PR
 		var labelsJSON string
 		var createdAt, updatedAt, fetchedAt string
-		var ciStatus, authorAssoc, reviewDecision, mergeable sql.NullString
+		var ciStatus, authorAssoc, reviewDecision, mergeable, lastCommitAt sql.NullString
 		var isReviewer, isAssignee, isAuthor, isDraft, isBot int
 
 		err := rows.Scan(
 			&pr.Repo, &pr.Number, &pr.Title, &pr.Body, &pr.Author, &authorAssoc,
 			&labelsJSON, &createdAt, &updatedAt, &pr.Additions, &pr.Deletions,
-			&pr.HeadSHA, &ciStatus, &isReviewer, &isAssignee, &isAuthor,
+			&pr.HeadSHA, &lastCommitAt, &ciStatus, &isReviewer, &isAssignee, &isAuthor,
 			&isDraft, &isBot, &reviewDecision, &mergeable, &fetchedAt,
 		)
 		if err != nil {
@@ -427,6 +466,9 @@ func scanPRs(rows *sql.Rows) ([]PR, error) {
 		pr.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		pr.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 		pr.FetchedAt, _ = time.Parse(time.RFC3339, fetchedAt)
+		if lastCommitAt.Valid {
+			pr.LastCommitAt, _ = time.Parse(time.RFC3339, lastCommitAt.String)
+		}
 
 		prs = append(prs, pr)
 	}
@@ -438,4 +480,11 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullableStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }

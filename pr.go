@@ -26,6 +26,7 @@ type PR struct {
 	Additions         int
 	Deletions         int
 	HeadSHA           string
+	LastCommitAt      time.Time
 	CIStatus          CIStatus
 	IsReviewer        bool
 	IsAssignee        bool

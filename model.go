@@ -184,9 +184,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prsLoadedMsg:
 		m.triageMap = msg.triageMap
-		m.newTab.setPRs(msg.newPRs, m.cfg.Tags, msg.updatesMap, msg.triageMap)
-		m.reviewTab.setPRs(msg.reviewPRs, m.cfg.Tags, msg.updatesMap, msg.triageMap)
-		m.awaitingMergeTab.setPRs(msg.awaitingMergePRs, m.cfg.Tags, msg.updatesMap, msg.triageMap)
+		m.newTab.setPRs(msg.newPRs, m.cfg.Tags, msg.updatesMap, msg.triageMap, msg.userReviewMap)
+		m.reviewTab.setPRs(msg.reviewPRs, m.cfg.Tags, msg.updatesMap, msg.triageMap, msg.userReviewMap)
+		m.awaitingMergeTab.setPRs(msg.awaitingMergePRs, m.cfg.Tags, msg.updatesMap, msg.triageMap, msg.userReviewMap)
 
 	case tea.KeyPressMsg:
 		if m.loading {
@@ -368,6 +368,7 @@ type prsLoadedMsg struct {
 	awaitingMergePRs []PR
 	updatesMap       map[string]bool
 	triageMap        map[string]TriageResult
+	userReviewMap    map[string]UserReview
 }
 
 func (m model) loadFromDB() tea.Cmd {
@@ -401,6 +402,7 @@ func (m model) loadFromDB() tea.Cmd {
 		}
 
 		triageMap, _ := m.db.LoadTriageMap()
+		userReviewMap, _ := m.db.LoadUserReviewMap()
 
 		return prsLoadedMsg{
 			newPRs:           newPRs,
@@ -408,6 +410,7 @@ func (m model) loadFromDB() tea.Cmd {
 			awaitingMergePRs: awaitingMergePRs,
 			updatesMap:       updatesMap,
 			triageMap:        triageMap,
+			userReviewMap:    userReviewMap,
 		}
 	}
 }

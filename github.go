@@ -95,6 +95,7 @@ query($owner: String!, $name: String!) {
         commits(last: 1) {
           nodes {
             commit {
+              committedDate
               statusCheckRollup {
                 state
               }
@@ -164,6 +165,7 @@ type gqlPR struct {
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
+				CommittedDate     time.Time `json:"committedDate"`
 				StatusCheckRollup *struct {
 					State string `json:"state"`
 				} `json:"statusCheckRollup"`
@@ -244,6 +246,11 @@ func FetchRepoPRs(db *DB, repo, user string) error {
 
 		ciStatus := parseCIStatus(gpr, needsApproval)
 
+		var lastCommitAt time.Time
+		if len(gpr.Commits.Nodes) > 0 {
+			lastCommitAt = gpr.Commits.Nodes[0].Commit.CommittedDate
+		}
+
 		pr := PR{
 			Repo:              repo,
 			Number:            gpr.Number,
@@ -256,6 +263,7 @@ func FetchRepoPRs(db *DB, repo, user string) error {
 			Additions:         gpr.Additions,
 			Deletions:         gpr.Deletions,
 			HeadSHA:           gpr.HeadRefOid,
+			LastCommitAt:      lastCommitAt,
 			CIStatus:          ciStatus,
 			IsReviewer:        isReviewer,
 			IsAssignee:        isAssignee,
