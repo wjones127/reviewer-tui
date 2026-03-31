@@ -142,8 +142,8 @@ func lastActionLabel(pr PR, ur UserReview) (label string, actionNeeded bool, sin
 	if pr.LastCommitAt.After(ur.ReviewedAt) {
 		return "Author updated", true, pr.LastCommitAt
 	}
-	if pr.UpdatedAt.After(ur.ReviewedAt) {
-		return "Author replied", true, pr.UpdatedAt
+	if pr.LastNonUserCommentAt.After(ur.ReviewedAt) {
+		return "Author replied", true, pr.LastNonUserCommentAt
 	}
 
 	if ur.State == "CHANGES_REQUESTED" {
