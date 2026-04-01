@@ -267,38 +267,39 @@ func FetchRepoPRs(db *DB, repo, user string) error {
 			lastCommitAt = gpr.Commits.Nodes[0].Commit.CommittedDate
 		}
 
-		var lastNonUserCommentAt time.Time
+		// Track the latest comment by the PR author (not us, not other reviewers).
+		var lastAuthorCommentAt time.Time
 		for _, c := range gpr.Comments.Nodes {
-			if c.Author != nil && !strings.EqualFold(c.Author.Login, user) {
-				if c.CreatedAt.After(lastNonUserCommentAt) {
-					lastNonUserCommentAt = c.CreatedAt
+			if c.Author != nil && strings.EqualFold(c.Author.Login, authorLogin) {
+				if c.CreatedAt.After(lastAuthorCommentAt) {
+					lastAuthorCommentAt = c.CreatedAt
 				}
 			}
 		}
 
 		pr := PR{
-			Repo:                 repo,
-			Number:               gpr.Number,
-			Title:                gpr.Title,
-			Author:               authorLogin,
-			AuthorAssociation:    gpr.AuthorAssociation,
-			Labels:               labels,
-			CreatedAt:            gpr.CreatedAt,
-			UpdatedAt:            gpr.UpdatedAt,
-			Additions:            gpr.Additions,
-			Deletions:            gpr.Deletions,
-			HeadSHA:              gpr.HeadRefOid,
-			LastCommitAt:         lastCommitAt,
-			LastNonUserCommentAt: lastNonUserCommentAt,
-			CIStatus:             ciStatus,
-			IsReviewer:           isReviewer,
-			IsAssignee:           isAssignee,
-			IsAuthor:             strings.EqualFold(authorLogin, user),
-			IsBot:                isBot,
-			IsDraft:              gpr.IsDraft,
-			ReviewDecision:       gpr.ReviewDecision,
-			Mergeable:            gpr.Mergeable,
-			FetchedAt:            now,
+			Repo:                repo,
+			Number:              gpr.Number,
+			Title:               gpr.Title,
+			Author:              authorLogin,
+			AuthorAssociation:   gpr.AuthorAssociation,
+			Labels:              labels,
+			CreatedAt:           gpr.CreatedAt,
+			UpdatedAt:           gpr.UpdatedAt,
+			Additions:           gpr.Additions,
+			Deletions:           gpr.Deletions,
+			HeadSHA:             gpr.HeadRefOid,
+			LastCommitAt:        lastCommitAt,
+			LastAuthorCommentAt: lastAuthorCommentAt,
+			CIStatus:            ciStatus,
+			IsReviewer:          isReviewer,
+			IsAssignee:          isAssignee,
+			IsAuthor:            strings.EqualFold(authorLogin, user),
+			IsBot:               isBot,
+			IsDraft:             gpr.IsDraft,
+			ReviewDecision:      gpr.ReviewDecision,
+			Mergeable:           gpr.Mergeable,
+			FetchedAt:           now,
 		}
 		if err := db.UpsertPR(pr); err != nil {
 			return fmt.Errorf("upserting PR %s#%d: %w", repo, gpr.Number, err)

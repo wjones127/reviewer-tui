@@ -13,29 +13,29 @@ const (
 )
 
 type PR struct {
-	Repo                 string
-	Number               int
-	Title                string
-	Body                 string
-	Author               string
-	AuthorAssociation    string
-	IsBot                bool
-	Labels               []string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	Additions            int
-	Deletions            int
-	HeadSHA              string
-	LastCommitAt         time.Time
-	LastNonUserCommentAt time.Time
-	CIStatus             CIStatus
-	IsReviewer           bool
-	IsAssignee           bool
-	IsAuthor             bool
-	IsDraft              bool
-	ReviewDecision       string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or ""
-	Mergeable            string // MERGEABLE, CONFLICTING, UNKNOWN
-	FetchedAt            time.Time
+	Repo                string
+	Number              int
+	Title               string
+	Body                string
+	Author              string
+	AuthorAssociation   string
+	IsBot               bool
+	Labels              []string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	Additions           int
+	Deletions           int
+	HeadSHA             string
+	LastCommitAt        time.Time
+	LastAuthorCommentAt time.Time
+	CIStatus            CIStatus
+	IsReviewer          bool
+	IsAssignee          bool
+	IsAuthor            bool
+	IsDraft             bool
+	ReviewDecision      string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or ""
+	Mergeable           string // MERGEABLE, CONFLICTING, UNKNOWN
+	FetchedAt           time.Time
 }
 
 func (p PR) IsNewContributor() bool {

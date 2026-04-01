@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS pulls (
     deletions         INTEGER,
     head_sha          TEXT,
     last_commit_at            TEXT,
-    last_non_user_comment_at  TEXT,
+    last_author_comment_at  TEXT,
     ci_status                 TEXT,
     is_reviewer       INTEGER NOT NULL DEFAULT 0,
     is_assignee       INTEGER NOT NULL DEFAULT 0,
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS pr_triage (
 // prColumns is the SELECT column list shared by all PR queries.
 const prColumns = `p.repo, p.number, p.title, p.body, p.author, p.author_association,
 	p.labels, p.created_at, p.updated_at, p.additions, p.deletions,
-	p.head_sha, p.last_commit_at, p.last_non_user_comment_at, p.ci_status,
+	p.head_sha, p.last_commit_at, p.last_author_comment_at, p.ci_status,
 	p.is_reviewer, p.is_assignee, p.is_author,
 	p.is_draft, p.is_bot, p.review_decision, p.mergeable, p.fetched_at`
 
@@ -97,6 +97,7 @@ func OpenDB(path string) (*DB, error) {
 	db.Exec("ALTER TABLE pulls ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE pulls ADD COLUMN last_commit_at TEXT")
 	db.Exec("ALTER TABLE pulls ADD COLUMN last_non_user_comment_at TEXT")
+	db.Exec("ALTER TABLE pulls ADD COLUMN last_author_comment_at TEXT")
 	return &DB{db: db}, nil
 }
 
@@ -113,14 +114,14 @@ func (d *DB) UpsertPR(pr PR) error {
 	if !pr.LastCommitAt.IsZero() {
 		lastCommitAt = pr.LastCommitAt.Format(time.RFC3339)
 	}
-	lastNonUserCommentAt := ""
-	if !pr.LastNonUserCommentAt.IsZero() {
-		lastNonUserCommentAt = pr.LastNonUserCommentAt.Format(time.RFC3339)
+	lastAuthorCommentAt := ""
+	if !pr.LastAuthorCommentAt.IsZero() {
+		lastAuthorCommentAt = pr.LastAuthorCommentAt.Format(time.RFC3339)
 	}
 	_, err = d.db.Exec(`
 		INSERT INTO pulls (repo, number, title, body, author, author_association, labels,
 			created_at, updated_at, additions, deletions, head_sha, last_commit_at,
-			last_non_user_comment_at, ci_status,
+			last_author_comment_at, ci_status,
 			is_reviewer, is_assignee, is_author, is_draft, is_bot, review_decision,
 			mergeable, fetched_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -136,7 +137,7 @@ func (d *DB) UpsertPR(pr PR) error {
 			deletions = excluded.deletions,
 			head_sha = excluded.head_sha,
 			last_commit_at = excluded.last_commit_at,
-			last_non_user_comment_at = excluded.last_non_user_comment_at,
+			last_author_comment_at = excluded.last_author_comment_at,
 			ci_status = excluded.ci_status,
 			is_reviewer = excluded.is_reviewer,
 			is_assignee = excluded.is_assignee,
@@ -150,7 +151,7 @@ func (d *DB) UpsertPR(pr PR) error {
 		string(labelsJSON),
 		pr.CreatedAt.Format(time.RFC3339), pr.UpdatedAt.Format(time.RFC3339),
 		pr.Additions, pr.Deletions, pr.HeadSHA, nullableStr(lastCommitAt),
-		nullableStr(lastNonUserCommentAt), string(pr.CIStatus),
+		nullableStr(lastAuthorCommentAt), string(pr.CIStatus),
 		boolToInt(pr.IsReviewer), boolToInt(pr.IsAssignee), boolToInt(pr.IsAuthor),
 		boolToInt(pr.IsDraft), boolToInt(pr.IsBot), pr.ReviewDecision, pr.Mergeable,
 		pr.FetchedAt.Format(time.RFC3339),
@@ -439,13 +440,13 @@ func scanPRs(rows *sql.Rows) ([]PR, error) {
 		var pr PR
 		var labelsJSON string
 		var createdAt, updatedAt, fetchedAt string
-		var ciStatus, authorAssoc, reviewDecision, mergeable, lastCommitAt, lastNonUserCommentAt sql.NullString
+		var ciStatus, authorAssoc, reviewDecision, mergeable, lastCommitAt, lastAuthorCommentAt sql.NullString
 		var isReviewer, isAssignee, isAuthor, isDraft, isBot int
 
 		err := rows.Scan(
 			&pr.Repo, &pr.Number, &pr.Title, &pr.Body, &pr.Author, &authorAssoc,
 			&labelsJSON, &createdAt, &updatedAt, &pr.Additions, &pr.Deletions,
-			&pr.HeadSHA, &lastCommitAt, &lastNonUserCommentAt, &ciStatus,
+			&pr.HeadSHA, &lastCommitAt, &lastAuthorCommentAt, &ciStatus,
 			&isReviewer, &isAssignee, &isAuthor,
 			&isDraft, &isBot, &reviewDecision, &mergeable, &fetchedAt,
 		)
@@ -480,8 +481,8 @@ func scanPRs(rows *sql.Rows) ([]PR, error) {
 		if lastCommitAt.Valid {
 			pr.LastCommitAt, _ = time.Parse(time.RFC3339, lastCommitAt.String)
 		}
-		if lastNonUserCommentAt.Valid {
-			pr.LastNonUserCommentAt, _ = time.Parse(time.RFC3339, lastNonUserCommentAt.String)
+		if lastAuthorCommentAt.Valid {
+			pr.LastAuthorCommentAt, _ = time.Parse(time.RFC3339, lastAuthorCommentAt.String)
 		}
 
 		prs = append(prs, pr)
